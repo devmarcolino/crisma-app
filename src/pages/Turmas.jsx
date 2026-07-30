@@ -1,22 +1,20 @@
 import { useEffect, useState } from 'react';
-import {
-  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs
-} from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Plus, Edit2, Trash2, X, Users, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function Turmas() {
-  const { isCoordenacao, userProfile, user } = useAuth();
+  const { isCoordenacao, user } = useAuth();
   const [turmas, setTurmas] = useState([]);
   const [crismandos, setCrismandos] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ nome: '', sala: '', catequistaId: '', catequistaNome: '', crismandoIds: [] });
+  const [form, setForm] = useState({ nome: '', sala: '', catequistaIds: [], crismandoIds: [] });
   const [editId, setEditId] = useState(null);
   const [expandido, setExpandido] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [busca, setBusca] = useState('');
+  const [buscaAluno, setBuscaAluno] = useState('');
 
   useEffect(() => {
     const unsubT = onSnapshot(collection(db, 'turmas'), snap =>
@@ -25,34 +23,42 @@ export default function Turmas() {
     const unsubC = onSnapshot(collection(db, 'crismandos'), snap =>
       setCrismandos(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => c.ativo !== false))
     );
-    const loadUsers = async () => {
-      const snap = await getDocs(collection(db, 'users'));
-      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    };
-    loadUsers();
+    getDocs(collection(db, 'users')).then(snap =>
+      setAllUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    );
     return () => { unsubT(); unsubC(); };
   }, []);
 
   const turmasVisiveis = isCoordenacao
     ? turmas
-    : turmas.filter(t => t.catequistaId === user?.uid);
+    : turmas.filter(t => t.catequistaIds?.includes(user?.uid) || t.catequistaId === user?.uid);
 
   const openForm = (turma = null) => {
     if (turma) {
+      // Suporte a turmas antigas com catequistaId único
+      const ids = turma.catequistaIds || (turma.catequistaId ? [turma.catequistaId] : []);
       setForm({
         nome: turma.nome || '',
         sala: turma.sala || '',
-        catequistaId: turma.catequistaId || '',
-        catequistaNome: turma.catequistaNome || '',
+        catequistaIds: ids,
         crismandoIds: turma.crismandoIds || [],
       });
       setEditId(turma.id);
     } else {
-      setForm({ nome: '', sala: '', catequistaId: '', catequistaNome: '', crismandoIds: [] });
+      setForm({ nome: '', sala: '', catequistaIds: [], crismandoIds: [] });
       setEditId(null);
     }
-    setBusca('');
+    setBuscaAluno('');
     setShowForm(true);
+  };
+
+  const toggleCatequista = (id) => {
+    setForm(f => ({
+      ...f,
+      catequistaIds: f.catequistaIds.includes(id)
+        ? f.catequistaIds.filter(x => x !== id)
+        : [...f.catequistaIds, id]
+    }));
   };
 
   const toggleCrismando = (id) => {
@@ -68,8 +74,18 @@ export default function Turmas() {
     if (!form.nome.trim()) return alert('Nome da turma é obrigatório.');
     setSaving(true);
     try {
-      const catUser = users.find(u => u.id === form.catequistaId);
-      const data = { ...form, catequistaNome: catUser?.nome || form.catequistaNome };
+      const catequistasNomes = form.catequistaIds
+        .map(id => allUsers.find(u => u.id === id)?.nome)
+        .filter(Boolean);
+      const data = {
+        nome: form.nome,
+        sala: form.sala,
+        catequistaIds: form.catequistaIds,
+        catequistasNomes,
+        // Mantém catequistaNome para compatibilidade com telas antigas
+        catequistaNome: catequistasNomes.join(', '),
+        crismandoIds: form.crismandoIds,
+      };
       if (editId) {
         await updateDoc(doc(db, 'turmas', editId), data);
       } else {
@@ -86,8 +102,8 @@ export default function Turmas() {
     await deleteDoc(doc(db, 'turmas', id));
   };
 
-  const filtrados = crismandos.filter(c =>
-    c.nome.toLowerCase().includes(busca.toLowerCase())
+  const filtradosAlunos = crismandos.filter(c =>
+    c.nome.toLowerCase().includes(buscaAluno.toLowerCase())
   );
 
   return (
@@ -112,6 +128,7 @@ export default function Turmas() {
         {turmasVisiveis.map(turma => {
           const membros = crismandos.filter(c => turma.crismandoIds?.includes(c.id));
           const isOpen = expandido === turma.id;
+          const nomesCat = turma.catequistasNomes?.join(', ') || turma.catequistaNome || '—';
           return (
             <div key={turma.id} className="card p-0 overflow-hidden">
               <div
@@ -121,10 +138,10 @@ export default function Turmas() {
                 <div className="w-10 h-10 bg-navy-100 rounded-lg flex items-center justify-center shrink-0">
                   <BookOpen size={18} className="text-navy-600" />
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <p className="font-semibold text-navy-800">{turma.nome}</p>
-                  <p className="text-xs text-gray-500">
-                    Sala: {turma.sala || '—'} · Catequista: {turma.catequistaNome || '—'}
+                  <p className="text-xs text-gray-500 truncate">
+                    Sala: {turma.sala || '—'} · Catequista(s): {nomesCat}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -185,30 +202,44 @@ export default function Turmas() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Sala</label>
                 <input value={form.sala} onChange={e => setForm({...form, sala: e.target.value})} className="input-field" placeholder="Ex: Sala 3, Salão Principal" />
               </div>
+
+              {/* Catequistas — múltipla seleção, todos os usuários */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Catequista Responsável</label>
-                {users.filter(u => u.role === 'catequista').length > 0 ? (
-                  <select value={form.catequistaId} onChange={e => setForm({...form, catequistaId: e.target.value})} className="input-field">
-                    <option value="">Selecionar catequista...</option>
-                    {users.filter(u => u.role === 'catequista').map(u => (
-                      <option key={u.id} value={u.id}>{u.nome}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input value={form.catequistaNome} onChange={e => setForm({...form, catequistaNome: e.target.value})} className="input-field" placeholder="Nome do catequista" />
-                )}
+                <label className="block text-xs font-medium text-gray-600 mb-2">
+                  Catequistas Responsáveis ({form.catequistaIds.length} selecionado{form.catequistaIds.length !== 1 ? 's' : ''})
+                </label>
+                <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-36 overflow-y-auto">
+                  {allUsers.map(u => (
+                    <label key={u.id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.catequistaIds.includes(u.id)}
+                        onChange={() => toggleCatequista(u.id)}
+                        className="accent-navy-600"
+                      />
+                      <span className="text-sm flex-1">{u.nome}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${u.role === 'coordenacao' ? 'bg-gold-100 text-gold-700' : 'bg-navy-100 text-navy-600'}`}>
+                        {u.role === 'coordenacao' ? 'Coord.' : 'Catequista'}
+                      </span>
+                    </label>
+                  ))}
+                  {allUsers.length === 0 && <p className="text-xs text-gray-400 text-center py-3">Nenhum usuário cadastrado</p>}
+                </div>
               </div>
 
+              {/* Crismandos */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-2">Crismandos ({form.crismandoIds.length} selecionados)</label>
+                <label className="block text-xs font-medium text-gray-600 mb-2">
+                  Crismandos ({form.crismandoIds.length} selecionados)
+                </label>
                 <input
-                  value={busca}
-                  onChange={e => setBusca(e.target.value)}
+                  value={buscaAluno}
+                  onChange={e => setBuscaAluno(e.target.value)}
                   placeholder="Buscar crismando..."
                   className="input-field mb-2"
                 />
                 <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-                  {filtrados.map(c => (
+                  {filtradosAlunos.map(c => (
                     <label key={c.id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer">
                       <input
                         type="checkbox"
@@ -219,7 +250,7 @@ export default function Turmas() {
                       <span className="text-sm">{c.nome}</span>
                     </label>
                   ))}
-                  {filtrados.length === 0 && <p className="text-xs text-gray-400 text-center py-4">Nenhum resultado</p>}
+                  {filtradosAlunos.length === 0 && <p className="text-xs text-gray-400 text-center py-4">Nenhum resultado</p>}
                 </div>
               </div>
             </div>

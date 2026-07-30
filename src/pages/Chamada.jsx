@@ -1,8 +1,8 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { collection, addDoc, onSnapshot, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Printer, CheckCircle, XCircle, MessageCircle, ClipboardList, ChevronDown } from 'lucide-react';
+import { Printer, CheckCircle, XCircle, MessageCircle, ClipboardList } from 'lucide-react';
 
 function whatsappUrl(tel, nome) {
   const num = tel.replace(/\D/g, '');
@@ -16,18 +16,16 @@ export default function Chamada() {
   const [turmas, setTurmas] = useState([]);
   const [crismandos, setCrismandos] = useState([]);
   const [turmaId, setTurmaId] = useState('');
-  const [modo, setModo] = useState('digital'); // 'digital' | 'impressao'
+  const [modo, setModo] = useState('digital');
   const [data, setData] = useState(new Date().toISOString().slice(0, 10));
   const [presencas, setPresencas] = useState({});
-  const [historico, setHistorico] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [salvo, setSalvo] = useState(false);
-  const printRef = useRef();
 
   useEffect(() => {
     const unsubT = onSnapshot(collection(db, 'turmas'), snap => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setTurmas(isCoordenacao ? all : all.filter(t => t.catequistaId === user?.uid));
+      setTurmas(isCoordenacao ? all : all.filter(t => t.catequistaIds?.includes(user?.uid) || t.catequistaId === user?.uid));
     });
     const unsubC = onSnapshot(collection(db, 'crismandos'), snap =>
       setCrismandos(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => c.ativo !== false))
@@ -35,7 +33,6 @@ export default function Chamada() {
     return () => { unsubT(); unsubC(); };
   }, []);
 
-  // Carrega histórico de chamadas ao mudar turma/data
   useEffect(() => {
     if (!turmaId || !data) return;
     const q = query(collection(db, 'chamadas'),
@@ -43,15 +40,15 @@ export default function Chamada() {
       where('data', '==', data)
     );
     getDocs(q).then(snap => {
-      const hist = snap.docs.map(d => d.data());
       const map = {};
-      hist.forEach(h => { map[h.crismandoId] = h.status; });
+      snap.docs.forEach(d => { map[d.data().crismandoId] = d.data().status; });
       setPresencas(map);
     });
   }, [turmaId, data]);
 
   const turmaAtual = turmas.find(t => t.id === turmaId);
-  const membros = crismandos.filter(c => turmaAtual?.crismandoIds?.includes(c.id))
+  const membros = crismandos
+    .filter(c => turmaAtual?.crismandoIds?.includes(c.id))
     .sort((a, b) => a.nome.localeCompare(b.nome));
 
   const marcar = (id, status) => setPresencas(p => ({ ...p, [id]: status }));
@@ -61,13 +58,11 @@ export default function Chamada() {
     setSalvando(true);
     try {
       for (const m of membros) {
-        const status = presencas[m.id] || 'falta';
         await addDoc(collection(db, 'chamadas'), {
-          turmaId,
-          data,
+          turmaId, data,
           crismandoId: m.id,
           crismandoNome: m.nome,
-          status,
+          status: presencas[m.id] || 'falta',
           turmaAula: turmaAtual?.nome || '',
           registradoEm: new Date().toISOString(),
         });
@@ -79,19 +74,21 @@ export default function Chamada() {
     }
   };
 
-  const handlePrint = () => window.print();
-
   const totalPresentes = membros.filter(m => presencas[m.id] === 'presente').length;
-  const totalFaltas = membros.filter(m => presencas[m.id] === 'falta' || !presencas[m.id]).length;
+  const totalFaltas = membros.length - totalPresentes;
+
+  // Nomes dos catequistas para exibir na lista impressa
+  const catequistasNomes = turmaAtual?.catequistasNomes?.join(', ') || turmaAtual?.catequistaNome || '—';
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-5">
-      <h1 className="text-2xl font-bold text-navy-700 flex items-center gap-2">
+      {/* Cabeçalho — oculto na impressão */}
+      <h1 className="text-2xl font-bold text-navy-700 flex items-center gap-2 no-print">
         <ClipboardList size={22} /> Chamada
       </h1>
 
-      {/* Controles */}
-      <div className="card space-y-4">
+      {/* Controles — ocultos na impressão */}
+      <div className="card space-y-4 no-print">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Turma</label>
@@ -105,41 +102,35 @@ export default function Chamada() {
             <input type="date" value={data} onChange={e => setData(e.target.value)} className="input-field" />
           </div>
         </div>
-
-        {/* Modo */}
         <div className="flex gap-2">
-          <button
-            onClick={() => setModo('digital')}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${modo === 'digital' ? 'bg-navy-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-          >
+          <button onClick={() => setModo('digital')}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${modo === 'digital' ? 'bg-navy-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
             📱 Chamada Digital
           </button>
-          <button
-            onClick={() => setModo('impressao')}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${modo === 'impressao' ? 'bg-navy-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-          >
+          <button onClick={() => setModo('impressao')}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${modo === 'impressao' ? 'bg-navy-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
             🖨️ Lista para Impressão
           </button>
         </div>
       </div>
 
       {!turmaId && (
-        <div className="card text-center py-10">
+        <div className="card text-center py-10 no-print">
           <ClipboardList size={32} className="text-gray-300 mx-auto mb-2" />
           <p className="text-gray-400">Selecione uma turma para iniciar a chamada.</p>
         </div>
       )}
 
       {turmaId && membros.length === 0 && (
-        <div className="card text-center py-8">
+        <div className="card text-center py-8 no-print">
           <p className="text-gray-400">Esta turma não possui crismandos vinculados.</p>
         </div>
       )}
 
+      {/* MODO DIGITAL */}
       {turmaId && membros.length > 0 && modo === 'digital' && (
         <>
-          {/* Resumo */}
-          <div className="flex gap-3">
+          <div className="flex gap-3 no-print">
             <div className="flex-1 card py-3 text-center">
               <p className="text-2xl font-bold text-green-600">{totalPresentes}</p>
               <p className="text-xs text-gray-500">Presentes</p>
@@ -154,16 +145,14 @@ export default function Chamada() {
             </div>
           </div>
 
-          {/* Lista */}
-          <div className="space-y-2">
+          <div className="space-y-2 no-print">
             {membros.map(m => {
               const status = presencas[m.id];
               const tel = m.telefone?.replace(/\D/g, '');
               return (
                 <div key={m.id} className={`card flex items-center gap-3 py-3 transition-colors ${
                   status === 'presente' ? 'border-green-200 bg-green-50' :
-                  status === 'falta' ? 'border-red-100 bg-red-50' : ''
-                }`}>
+                  status === 'falta' ? 'border-red-100 bg-red-50' : ''}`}>
                   <div className="w-9 h-9 rounded-full bg-navy-100 flex items-center justify-center shrink-0 text-sm font-bold text-navy-700">
                     {m.nome[0].toUpperCase()}
                   </div>
@@ -177,20 +166,14 @@ export default function Chamada() {
                     )}
                   </div>
                   <div className="flex gap-2 shrink-0">
-                    <button
-                      onClick={() => marcar(m.id, 'presente')}
+                    <button onClick={() => marcar(m.id, 'presente')}
                       className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        status === 'presente' ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-green-100'
-                      }`}
-                    >
+                        status === 'presente' ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-green-100'}`}>
                       <CheckCircle size={13} /> P
                     </button>
-                    <button
-                      onClick={() => marcar(m.id, 'falta')}
+                    <button onClick={() => marcar(m.id, 'falta')}
                       className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        status === 'falta' ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-red-100'
-                      }`}
-                    >
+                        status === 'falta' ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-red-100'}`}>
                       <XCircle size={13} /> F
                     </button>
                   </div>
@@ -199,7 +182,7 @@ export default function Chamada() {
             })}
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end no-print">
             {salvo && <span className="badge-green mr-3 self-center text-sm">✓ Chamada salva!</span>}
             <button onClick={salvarChamada} disabled={salvando} className="btn-primary">
               {salvando ? 'Salvando...' : '💾 Salvar Chamada'}
@@ -208,60 +191,69 @@ export default function Chamada() {
         </>
       )}
 
+      {/* MODO IMPRESSÃO */}
       {turmaId && membros.length > 0 && modo === 'impressao' && (
-        <div>
-          <div className="flex justify-end mb-4">
-            <button onClick={handlePrint} className="btn-secondary">
+        <>
+          <div className="flex justify-end no-print">
+            <button onClick={() => window.print()} className="btn-secondary">
               <Printer size={16} /> Imprimir Lista
             </button>
           </div>
 
-          {/* Print area */}
-          <div ref={printRef} className="card print-area">
-            <div className="text-center border-b border-gray-200 pb-4 mb-4">
-              <h2 className="text-lg font-bold text-navy-800">Paróquia São João Clímaco</h2>
-              <h3 className="text-base font-semibold text-gray-700">Lista de Presença — Crisma</h3>
-              <div className="flex justify-center gap-6 mt-2 text-sm text-gray-600">
+          {/* Área de impressão — visível na tela e na impressora */}
+          <div id="print-area" className="bg-white p-6 rounded-xl border border-gray-200">
+            <div className="text-center border-b border-gray-300 pb-4 mb-5">
+              <h2 style={{fontSize:'18px', fontWeight:'bold', color:'#1a3a5c', margin:0}}>Paróquia São João Clímaco</h2>
+              <h3 style={{fontSize:'14px', fontWeight:'600', color:'#374151', margin:'4px 0 0'}}>Lista de Presença — Crisma</h3>
+              <div style={{display:'flex', justifyContent:'center', gap:'24px', marginTop:'8px', fontSize:'13px', color:'#4b5563'}}>
                 <span>Turma: <strong>{turmaAtual?.nome}</strong></span>
                 <span>Sala: <strong>{turmaAtual?.sala || '—'}</strong></span>
                 <span>Data: <strong>{new Date(data + 'T12:00:00').toLocaleDateString('pt-BR')}</strong></span>
               </div>
+              <div style={{fontSize:'12px', color:'#6b7280', marginTop:'4px'}}>
+                Catequista(s): <strong>{catequistasNomes}</strong>
+              </div>
             </div>
 
-            <table className="w-full text-sm border-collapse">
+            <table style={{width:'100%', borderCollapse:'collapse', fontSize:'13px'}}>
               <thead>
-                <tr className="bg-gray-100">
-                  <th className="border border-gray-300 px-3 py-2 text-left w-8">Nº</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left">Nome do Crismando</th>
-                  <th className="border border-gray-300 px-3 py-2 text-center w-20">Presença</th>
-                  <th className="border border-gray-300 px-3 py-2 text-center w-20">Falta</th>
+                <tr style={{backgroundColor:'#eef2f7'}}>
+                  <th style={{border:'1px solid #9ca3af', padding:'8px', textAlign:'left', width:'40px'}}>Nº</th>
+                  <th style={{border:'1px solid #9ca3af', padding:'8px', textAlign:'left'}}>Nome do Crismando</th>
+                  <th style={{border:'1px solid #9ca3af', padding:'8px', textAlign:'center', width:'80px'}}>Presença</th>
+                  <th style={{border:'1px solid #9ca3af', padding:'8px', textAlign:'center', width:'80px'}}>Falta</th>
                 </tr>
               </thead>
               <tbody>
                 {membros.map((m, i) => (
-                  <tr key={m.id} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                    <td className="border border-gray-300 px-3 py-2 text-center text-gray-500">{i + 1}</td>
-                    <td className="border border-gray-300 px-3 py-2">{m.nome}</td>
-                    <td className="border border-gray-300 px-3 py-2 text-center">☐</td>
-                    <td className="border border-gray-300 px-3 py-2 text-center">☐</td>
+                  <tr key={m.id} style={{backgroundColor: i % 2 === 0 ? '#ffffff' : '#f9fafb'}}>
+                    <td style={{border:'1px solid #9ca3af', padding:'8px', textAlign:'center', color:'#6b7280'}}>{i + 1}</td>
+                    <td style={{border:'1px solid #9ca3af', padding:'8px'}}>{m.nome}</td>
+                    <td style={{border:'1px solid #9ca3af', padding:'8px', textAlign:'center', fontSize:'16px'}}>☐</td>
+                    <td style={{border:'1px solid #9ca3af', padding:'8px', textAlign:'center', fontSize:'16px'}}>☐</td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
-            <div className="mt-6 flex justify-between text-sm text-gray-600">
-              <span>Total de alunos: {membros.length}</span>
+            <div style={{display:'flex', justifyContent:'space-between', marginTop:'24px', fontSize:'12px', color:'#4b5563'}}>
+              <span>Total de alunos: <strong>{membros.length}</strong></span>
               <span>Assinatura do Catequista: ___________________________</span>
             </div>
           </div>
-        </div>
+        </>
       )}
 
+      {/* Estilos de impressão */}
       <style>{`
         @media print {
-          body > * { display: none; }
-          .print-area { display: block !important; }
-          * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .no-print { display: none !important; }
+          #print-area {
+            border: none !important;
+            padding: 0 !important;
+            border-radius: 0 !important;
+          }
+          body { margin: 0; }
         }
       `}</style>
     </div>

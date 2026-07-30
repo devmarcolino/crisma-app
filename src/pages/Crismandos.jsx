@@ -1,29 +1,54 @@
 import { useEffect, useState } from 'react';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Plus, Search, Edit2, Trash2, MessageCircle, ExternalLink,
-  X, Check, FileText, ChevronDown, ChevronUp, User, Phone, Users
+  X, Check, FileText, ChevronDown, ChevronUp, Users
 } from 'lucide-react';
 
 const EMPTY_FORM = {
   nome: '', dataNascimento: '', telefone: '', nomePais: '',
-  fichaUrl: '', batismo: false, primeiraComunhao: false,
-  docsPadrinhos: false, lgpdAssinado: false, ativo: true,
+  fichaUrl: '',
+  // Documentos
+  batismo: false, primeiraComunhao: false, docsPadrinhos: false,
+  comprovanteResidencia: false,
+  // Sacramentos a realizar
+  sacramentoBatismo: false, sacramentoPrimeiraComunhao: false, sacramentoEucaristia: false,
+  // LGPD
+  lgpdAssinado: false,
+  ativo: true,
 };
 
-function phoneMask(v) {
+function phoneMask(v = '') {
   v = v.replace(/\D/g, '').slice(0, 11);
   if (v.length <= 10) return v.replace(/(\d{2})(\d{4})(\d{0,4})/, '($1) $2-$3').replace(/-$/, '');
   return v.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3').replace(/-$/, '');
 }
 
-function whatsappUrl(telefone, nome) {
-  const num = telefone.replace(/\D/g, '');
+function whatsappUrl(tel, nome) {
+  const num = tel.replace(/\D/g, '');
   const full = num.startsWith('55') ? num : '55' + num;
   const msg = encodeURIComponent(`Olá! Sentimos a falta do ${nome} no encontro de hoje da Crisma na Paróquia São João Clímaco. Está tudo bem?`);
   return `https://wa.me/${full}?text=${msg}`;
+}
+
+function Checkbox({ label, checked, onChange, danger = false }) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none">
+      <div
+        onClick={onChange}
+        className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors shrink-0 ${
+          checked
+            ? danger ? 'bg-amber-500 border-amber-500' : 'bg-navy-600 border-navy-600'
+            : 'border-gray-300 bg-white'
+        }`}
+      >
+        {checked && <Check size={12} className="text-white" />}
+      </div>
+      <span className="text-sm text-gray-700">{label}</span>
+    </label>
+  );
 }
 
 export default function Crismandos() {
@@ -34,7 +59,7 @@ export default function Crismandos() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [editId, setEditId] = useState(null);
   const [expandido, setExpandido] = useState(null);
-  const [loading, setSaving] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   useEffect(() => {
@@ -51,15 +76,12 @@ export default function Crismandos() {
   );
 
   const openForm = (crismando = null) => {
-    if (crismando) {
-      setForm({ ...EMPTY_FORM, ...crismando });
-      setEditId(crismando.id);
-    } else {
-      setForm(EMPTY_FORM);
-      setEditId(null);
-    }
+    setForm(crismando ? { ...EMPTY_FORM, ...crismando } : EMPTY_FORM);
+    setEditId(crismando?.id || null);
     setShowForm(true);
   };
+
+  const toggle = (field) => setForm(f => ({ ...f, [field]: !f[field] }));
 
   const handleSave = async () => {
     if (!form.nome.trim()) return alert('Nome é obrigatório.');
@@ -82,49 +104,38 @@ export default function Crismandos() {
     setConfirmDelete(null);
   };
 
-  const Checkbox = ({ label, checked, onChange }) => (
-    <label className="flex items-center gap-2 cursor-pointer select-none">
-      <div
-        onClick={onChange}
-        className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-          checked ? 'bg-navy-600 border-navy-600' : 'border-gray-300 bg-white'
-        }`}
-      >
-        {checked && <Check size={12} className="text-white" />}
-      </div>
-      <span className="text-sm text-gray-700">{label}</span>
-    </label>
-  );
-
+  // Contagem de docs entregues (4 docs agora)
   const docStatus = (c) => {
-    const total = 3;
-    const ok = [c.batismo, c.primeiraComunhao, c.docsPadrinhos].filter(Boolean).length;
-    return { ok, total };
+    const ok = [c.batismo, c.primeiraComunhao, c.docsPadrinhos, c.comprovanteResidencia].filter(Boolean).length;
+    return { ok, total: 4 };
+  };
+
+  // Sacramentos a realizar
+  const sacramentosLabel = (c) => {
+    const s = [];
+    if (c.sacramentoBatismo) s.push('Batismo');
+    if (c.sacramentoPrimeiraComunhao) s.push('1ª Comunhão');
+    if (c.sacramentoEucaristia) s.push('Eucaristia');
+    return s.length ? s.join(', ') : null;
   };
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-navy-700">Crismandos</h1>
-        {(isCoordenacao) && (
+        {isCoordenacao && (
           <button onClick={() => openForm()} className="btn-primary">
             <Plus size={16} /> Novo Crismando
           </button>
         )}
       </div>
 
-      {/* Busca */}
       <div className="relative">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input
-          value={busca}
-          onChange={e => setBusca(e.target.value)}
-          placeholder="Buscar por nome ou pais..."
-          className="input-field pl-9"
-        />
+        <input value={busca} onChange={e => setBusca(e.target.value)}
+          placeholder="Buscar por nome ou pais..." className="input-field pl-9" />
       </div>
 
-      {/* Lista */}
       <div className="space-y-2">
         {filtrados.length === 0 && (
           <div className="card text-center py-10">
@@ -132,11 +143,12 @@ export default function Crismandos() {
             <p className="text-gray-400">Nenhum crismando encontrado.</p>
           </div>
         )}
+
         {filtrados.map(c => {
           const { ok, total } = docStatus(c);
           const isOpen = expandido === c.id;
           const tel = c.telefone?.replace(/\D/g, '');
-          const telFormatado = phoneMask(c.telefone || '');
+          const sacramentos = sacramentosLabel(c);
 
           return (
             <div key={c.id} className="card p-0 overflow-hidden">
@@ -152,7 +164,9 @@ export default function Crismandos() {
                   <p className="text-xs text-gray-500 truncate">{c.nomePais || '—'}</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ok === total ? 'bg-green-100 text-green-700' : ok > 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                    ok === total ? 'bg-green-100 text-green-700' :
+                    ok > 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
                     Docs {ok}/{total}
                   </span>
                   {!c.lgpdAssinado && <span className="badge-yellow">LGPD</span>}
@@ -163,29 +177,39 @@ export default function Crismandos() {
               {isOpen && (
                 <div className="border-t border-gray-100 px-4 py-4 bg-gray-50 space-y-4">
                   <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div><p className="text-xs text-gray-400">Nascimento</p><p className="font-medium">{c.dataNascimento ? new Date(c.dataNascimento + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}</p></div>
-                    <div><p className="text-xs text-gray-400">Telefone</p><p className="font-medium">{telFormatado || '—'}</p></div>
+                    <div><p className="text-xs text-gray-400">Nascimento</p>
+                      <p className="font-medium">{c.dataNascimento ? new Date(c.dataNascimento + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}</p>
+                    </div>
+                    <div><p className="text-xs text-gray-400">Telefone</p>
+                      <p className="font-medium">{phoneMask(c.telefone || '') || '—'}</p>
+                    </div>
                   </div>
 
-                  {/* Documentos */}
+                  {sacramentos && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Sacramentos a realizar</p>
+                      <p className="text-sm text-navy-700 font-medium">{sacramentos}</p>
+                    </div>
+                  )}
+
                   <div>
-                    <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Documentos</p>
+                    <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Documentação entregue</p>
                     <div className="flex flex-wrap gap-2">
                       <span className={`badge-${c.batismo ? 'green' : 'red'}`}>Batismo</span>
                       <span className={`badge-${c.primeiraComunhao ? 'green' : 'red'}`}>1ª Comunhão</span>
                       <span className={`badge-${c.docsPadrinhos ? 'green' : 'red'}`}>Docs Padrinhos</span>
+                      <span className={`badge-${c.comprovanteResidencia ? 'green' : 'red'}`}>Comp. Residência</span>
                       <span className={`badge-${c.lgpdAssinado ? 'green' : 'yellow'}`}>LGPD</span>
                     </div>
                   </div>
 
-                  {/* Ficha URL */}
                   {c.fichaUrl && (
-                    <a href={c.fichaUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-navy-600 text-sm hover:underline w-fit">
+                    <a href={c.fichaUrl} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-2 text-navy-600 text-sm hover:underline w-fit">
                       <FileText size={14} /> Ver Ficha no Drive <ExternalLink size={12} />
                     </a>
                   )}
 
-                  {/* Ações */}
                   <div className="flex flex-wrap gap-2 pt-1">
                     {tel && (
                       <a href={whatsappUrl(tel, c.nome)} target="_blank" rel="noopener noreferrer"
@@ -219,7 +243,8 @@ export default function Crismandos() {
               <h2 className="font-bold text-navy-700">{editId ? 'Editar Crismando' : 'Novo Crismando'}</h2>
               <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
             </div>
-            <div className="px-6 py-5 space-y-4">
+            <div className="px-6 py-5 space-y-5">
+              {/* Dados básicos */}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Nome completo *</label>
                 <input value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} className="input-field" placeholder="Nome do crismando" />
@@ -239,40 +264,52 @@ export default function Crismandos() {
                 <input value={form.nomePais} onChange={e => setForm({...form, nomePais: e.target.value})} className="input-field" placeholder="Nome dos pais" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Link da Ficha no Google Drive
-                </label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Link da Ficha no Google Drive</label>
                 <input value={form.fichaUrl} onChange={e => setForm({...form, fichaUrl: e.target.value})} className="input-field" placeholder="https://drive.google.com/..." />
               </div>
 
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Documentação</p>
+              {/* Sacramentos a realizar */}
+              <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                <p className="text-xs font-semibold text-blue-700 uppercase mb-3">Sacramentos a realizar na Crisma</p>
                 <div className="space-y-2">
-                  <Checkbox label="Batismo entregue" checked={form.batismo} onChange={() => setForm({...form, batismo: !form.batismo})} />
-                  <Checkbox label="Primeira Comunhão entregue" checked={form.primeiraComunhao} onChange={() => setForm({...form, primeiraComunhao: !form.primeiraComunhao})} />
-                  <Checkbox label="Documentos dos Padrinhos entregues" checked={form.docsPadrinhos} onChange={() => setForm({...form, docsPadrinhos: !form.docsPadrinhos})} />
+                  <Checkbox label="Batismo" checked={form.sacramentoBatismo} onChange={() => toggle('sacramentoBatismo')} />
+                  <Checkbox label="Primeira Comunhão" checked={form.sacramentoPrimeiraComunhao} onChange={() => toggle('sacramentoPrimeiraComunhao')} />
+                  <Checkbox label="Eucaristia" checked={form.sacramentoEucaristia} onChange={() => toggle('sacramentoEucaristia')} />
                 </div>
               </div>
 
+              {/* Documentação entregue */}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Documentação entregue</p>
+                <div className="space-y-2">
+                  <Checkbox label="Certidão de Batismo" checked={form.batismo} onChange={() => toggle('batismo')} />
+                  <Checkbox label="Certidão de Primeira Comunhão" checked={form.primeiraComunhao} onChange={() => toggle('primeiraComunhao')} />
+                  <Checkbox label="Documentos dos Padrinhos" checked={form.docsPadrinhos} onChange={() => toggle('docsPadrinhos')} />
+                  <Checkbox label="Comprovante de Residência" checked={form.comprovanteResidencia} onChange={() => toggle('comprovanteResidencia')} />
+                </div>
+              </div>
+
+              {/* LGPD */}
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                 <Checkbox
                   label="✓ Termo de Consentimento LGPD Assinado"
                   checked={form.lgpdAssinado}
-                  onChange={() => setForm({...form, lgpdAssinado: !form.lgpdAssinado})}
+                  onChange={() => toggle('lgpdAssinado')}
+                  danger
                 />
               </div>
             </div>
             <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
               <button onClick={() => setShowForm(false)} className="btn-secondary">Cancelar</button>
-              <button onClick={handleSave} disabled={loading} className="btn-primary">
-                {loading ? 'Salvando...' : (editId ? 'Salvar alterações' : 'Cadastrar')}
+              <button onClick={handleSave} disabled={saving} className="btn-primary">
+                {saving ? 'Salvando...' : (editId ? 'Salvar alterações' : 'Cadastrar')}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal Confirmação Delete */}
+      {/* Confirmação delete */}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full">
