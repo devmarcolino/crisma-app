@@ -14,7 +14,7 @@ function PrivateRoute({ children }) {
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-navy-700">
       <div className="text-center">
-        <div className="w-12 h-12 border-4 border-gold-400 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+        <div className="w-12 h-12 border-4 border-gold-400 border-t-transparent rounded-full animate-spin mx-auto mb-4"/>
         <p className="text-navy-200 text-sm">Carregando...</p>
       </div>
     </div>
